@@ -1,0 +1,22 @@
+follow_wall: "left"
+topic_pcl: "/elas/point_cloud"
+service_pose: "/elas/pose"
+
+standoff_distance: 0.5 # Distance to keep from the bommie
+eps_error: 0.1 # Error tolerance for the keep distance
+
+max_view_forward: 5.0 # Distance to look ahead
+min_view_forward: 0.5 # Minimum distance to look ahead
+max_view_side: 10.0 # Distance to look to the side
+min_view_side: 0.10 # Minimum distance to look to the side
+
+number_of_planes: 5 # Number of planes to use for the wall following
+plane_length: 0.75 # Length of the single plane
+height_plane: 0.5 # Height of the single plane
+angle_tolerance: 45.0 # Angle tolerance for the plane normal
+
+# Parameters for filtering
+leaf_size: 0.025 # Leaf size for the voxel grid filter
+
+
+debug: true # Debug mode
