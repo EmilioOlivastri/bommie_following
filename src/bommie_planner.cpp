@@ -3,6 +3,9 @@
 #include <yaml-cpp/yaml.h>
 #include <chrono>
 
+#include "cudaPCL/cudaFilter.h"
+
+
 #define LEFT 0
 #define RIGHT 1
 
@@ -56,8 +59,12 @@ BommiePlanner::BommiePlanner(std::string config_file)
         _debug_new_goals.push_back(_n.advertise<visualization_msgs::Marker>(base_new_goal + std::to_string(i), 1));
     }
 
-    _vertical_normal = Eigen::Vector3d(1.0, 0.0, 0.0);
+    _cuda_filter_map.insert(std::pair<std::string, int>("x", 0));
+    _cuda_filter_map.insert(std::pair<std::string, int>("y", 1));
+    _cuda_filter_map.insert(std::pair<std::string, int>("z", 2));
 
+    _vertical_normal = Eigen::Vector3d(1.0, 0.0, 0.0);
+    _cuda = config["cuda"].as<bool>();
 }
 
 BommiePlanner::~BommiePlanner(){}
@@ -65,33 +72,29 @@ BommiePlanner::~BommiePlanner(){}
 
 void BommiePlanner::wallFollowing(const sensor_msgs::PointCloud2ConstPtr& cloud_msg)
 { 
-    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point real_begin = std::chrono::steady_clock::now();
     pcl::PointCloud<pcl::PointXYZ> cloud, cloud_filtered;
 
     pcl::fromROSMsg(*cloud_msg, cloud);
     double tot_points = static_cast<double>(cloud.size());
     _header = cloud_msg->header;
 
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
     //if (_debug ) pcl::io::savePCDFileASCII("./full_cloud.pcd", cloud);
 
     // Create a PassThrough filter to remove points outside the specified range
     filterCloud(cloud, "y", -_height_plane, _height_plane, cloud_filtered);
     filterCloud(cloud_filtered, "z", _min_view_forward_distance, _max_view_forward_distance, cloud);
-    cloud_filtered.clear();
     std::chrono::steady_clock::time_point filtering = std::chrono::steady_clock::now();
 
     // Downsampling the point cloud
-    pcl::VoxelGrid<pcl::PointXYZ> voxel_grid;
-    voxel_grid.setInputCloud(cloud.makeShared());
-    voxel_grid.setLeafSize(_leaf_size, _leaf_size, _leaf_size);
-    voxel_grid.filter(cloud);
+    downSampleCloud(cloud, cloud_filtered);
     std::chrono::steady_clock::time_point donwsampling = std::chrono::steady_clock::now();
 
-
-    double lower_limit = _follow_wall == LEFT ? -_max_view_side_distance : _min_view_side_distance;
-    double upper_limit = _follow_wall == LEFT ? -_min_view_side_distance : _max_view_side_distance;
-    filterCloud(cloud, "x", lower_limit, upper_limit, cloud_filtered);
-    //filterCloud(cloud, "x", -_max_view_side_distance, _max_view_side_distance, cloud_filtered);
+    //filterCloud(cloud_filtered, "x", -_max_view_side_distance, _max_view_side_distance, cloud);
+    filterCloud(cloud_filtered, "x", -_max_view_side_distance, _max_view_side_distance, cloud);
+    cloud_filtered = cloud;
     double filtered_points = static_cast<double>(cloud_filtered.size());
     std::chrono::steady_clock::time_point left_division = std::chrono::steady_clock::now();
 
@@ -108,9 +111,8 @@ void BommiePlanner::wallFollowing(const sensor_msgs::PointCloud2ConstPtr& cloud_
         double max_limit = min_limit + _length_plane;
         pcl::PointCloud<pcl::PointXYZ> cloud_plane, best_plane;
         filterCloud(cloud_filtered, "z", min_limit, 
-                    max_limit, cloud_plane);
+                     max_limit, cloud_plane);
 
-        //std::cout << "Plane " << i << " size: " << cloud_plane.size() << std::endl;
         bool plane_found_local = estimateBestPlane(cloud_plane, best_plane, normals[i]);
         cloud_planes.emplace_back(plane_found_local ? best_plane : cloud_plane);
         plane_found_vec[i] = plane_found_local;
@@ -163,8 +165,8 @@ void BommiePlanner::wallFollowing(const sensor_msgs::PointCloud2ConstPtr& cloud_
         goal += norm_prj;
 
         //std::cout << "Plane normal 3D: " << normals[i].transpose() << std::endl;
-        std::cout << "Plane normal 2D: " << norm_prj.transpose() << std::endl;
-        std::cout << "Angle = " << cos_alpha << std::endl;
+        //std::cout << "Plane normal 2D: " << norm_prj.transpose() << std::endl;
+        //std::cout << "Angle = " << cos_alpha << std::endl;
 
         _debug ? pcl::toROSMsg(cloud_planes[i], plane_msg) : pcl::toROSMsg(plane_countour, plane_msg);  
         plane_msg.header = cloud_msg->header;
@@ -177,8 +179,8 @@ void BommiePlanner::wallFollowing(const sensor_msgs::PointCloud2ConstPtr& cloud_
     
     // Keep constant distance
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    std::chrono::microseconds tot_time = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
-    std::chrono::microseconds filtering_time = std::chrono::duration_cast<std::chrono::microseconds>(filtering - begin);
+    std::chrono::microseconds tot_time = std::chrono::duration_cast<std::chrono::microseconds>(end - real_begin);
+    std::chrono::microseconds filtering_time = std::chrono::duration_cast<std::chrono::microseconds>(filtering - real_begin);
     std::chrono::microseconds downsampling_time = std::chrono::duration_cast<std::chrono::microseconds>(donwsampling - filtering);
     std::chrono::microseconds left_division_time = std::chrono::duration_cast<std::chrono::microseconds>(left_division - donwsampling);
     std::chrono::microseconds plane_estimation_time = std::chrono::duration_cast<std::chrono::microseconds>(plane_estimation - left_division);
@@ -199,17 +201,152 @@ void BommiePlanner::wallFollowing(const sensor_msgs::PointCloud2ConstPtr& cloud_
 }
 
 
-void BommiePlanner::filterCloud(const pcl::PointCloud<pcl::PointXYZ>& cloud,
-                                const std::string& field_name,
-                                const float min_limit,
-                                const float max_limit, 
-                                pcl::PointCloud<pcl::PointXYZ>& cloud_filtered)
-{
+void BommiePlanner::filterCloudCPU(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                                   const std::string& field_name,
+                                   const float min_limit,
+                                   const float max_limit, 
+                                   pcl::PointCloud<pcl::PointXYZ>& cloud_filtered)
+{    
     pcl::PassThrough<pcl::PointXYZ> pass;
     pass.setInputCloud(cloud.makeShared());
     pass.setFilterFieldName(field_name);
     pass.setFilterLimits(min_limit, max_limit); 
     pass.filter(cloud_filtered);
+
+    return;
+}
+
+void BommiePlanner::downSampleCloudCPU(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                                       pcl::PointCloud<pcl::PointXYZ>& cloud_filtered)
+{
+    pcl::VoxelGrid<pcl::PointXYZ> voxel_grid;
+    voxel_grid.setInputCloud(cloud.makeShared());
+    voxel_grid.setLeafSize(_leaf_size, _leaf_size, _leaf_size);
+    voxel_grid.filter(cloud_filtered);
+
+    return;
+}
+
+void BommiePlanner::filterCloudCuda(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                                    const std::string& field_name,
+                                    const float min_limit,
+                                    const float max_limit, 
+                                    pcl::PointCloud<pcl::PointXYZ>& cloud_filtered)
+{
+    // Activating the CUDA stream between the host and device
+    cudaStream_t stream = NULL;
+    cudaStreamCreate ( &stream );
+    
+    // CPU Data Operations
+    unsigned int num_points = cloud.width * cloud.height;
+    float* input_cpu = (float *)cloud.points.data();
+
+    // Allocate memory for the input data on the cuda device and copy the data
+    float *input_cuda = NULL;
+    cudaMallocManaged(&input_cuda, sizeof(float) * 4 * num_points, cudaMemAttachHost);
+    cudaStreamAttachMemAsync (stream, input_cuda);
+    cudaMemcpyAsync(input_cuda, input_cpu, sizeof(float) * 4 * num_points, cudaMemcpyHostToDevice, stream);
+    cudaStreamSynchronize(stream);
+
+    // Allocate memory for the output data on the cuda device
+    float *output_cuda = NULL;
+    cudaMallocManaged(&output_cuda, sizeof(float) * 4 * num_points, cudaMemAttachHost);
+    cudaStreamAttachMemAsync (stream, output_cuda);
+    cudaStreamSynchronize(stream);
+
+    // Creating the filter object
+    cudaFilter filter(stream);
+    FilterParam_t setP;
+    FilterType_t type = PASSTHROUGH;
+    setP.type = type;
+    setP.dim = _cuda_filter_map[field_name];
+    setP.upFilterLimits = max_limit;
+    setP.downFilterLimits = min_limit;
+    setP.limitsNegative = false;
+    filter.set(setP);
+
+    // Filtering the data
+    unsigned int num_points_filtered = 0;
+    cudaDeviceSynchronize();
+    filter.filter(output_cuda, &num_points_filtered, input_cuda, num_points);
+    cudaDeviceSynchronize();
+
+    // Allocating memory for the output data on the host
+    cloud_filtered.width = num_points_filtered; 
+    cloud_filtered.height = 1;
+    cloud_filtered.resize(cloud_filtered.width * cloud_filtered.height);
+    float *output_cpu = (float *)cloud_filtered.points.data();
+    memset(output_cpu, 0, sizeof(float) * 4 * num_points_filtered);
+
+    // Copying the filtered data from the device to the host
+    cudaMemcpyAsync(output_cpu, output_cuda, sizeof(float) * 4 * num_points_filtered, cudaMemcpyDeviceToHost, stream);
+    cudaDeviceSynchronize();
+
+    // Freeing the allocated memory
+    cudaFree(input_cuda);
+    cudaFree(output_cuda);
+    cudaStreamDestroy(stream);
+
+    return;
+}
+
+void BommiePlanner::downSampleCloudCuda(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                                        pcl::PointCloud<pcl::PointXYZ>& cloud_filtered)
+{
+    // Activating the CUDA stream between the host and device
+    cudaStream_t stream = NULL;
+    cudaStreamCreate ( &stream );
+
+    // CPU Data Operations
+    unsigned int num_points = cloud.width * cloud.height;
+    float* input_cpu = (float *)cloud.points.data();
+
+    // Allocate memory for the input data on the cuda device and copy the data
+    float *input_cuda = NULL;
+    cudaMallocManaged(&input_cuda, sizeof(float) * 4 * num_points, cudaMemAttachHost);
+    cudaStreamAttachMemAsync(stream, input_cuda);
+    cudaMemcpyAsync(input_cuda, input_cpu, sizeof(float) * 4 * num_points, cudaMemcpyHostToDevice, stream);
+    cudaStreamSynchronize(stream);
+
+    // Allocate memory for the output data on the cuda device
+    float *output_cuda = NULL;
+    cudaMallocManaged(&output_cuda, sizeof(float) * 4 * num_points, cudaMemAttachHost);
+    cudaStreamAttachMemAsync(stream, output_cuda);
+    cudaStreamSynchronize(stream);
+
+    // Creating the filter object
+    cudaFilter filter(stream);
+    FilterParam_t setP;
+    FilterType_t type = VOXELGRID;
+    setP.type = type;
+    setP.voxelX = _leaf_size;
+    setP.voxelY = _leaf_size;
+    setP.voxelZ = _leaf_size;
+    filter.set(setP);
+
+    // Filtering the data
+    unsigned int num_points_filtered = 0;
+    cudaDeviceSynchronize();
+    int status = filter.filter(output_cuda, &num_points_filtered, input_cuda, num_points);
+    cudaDeviceSynchronize();
+    
+    // Allocating memory for the output data on the host
+    cloud_filtered.width = num_points_filtered; 
+    cloud_filtered.height = 1;
+    cloud_filtered.resize(cloud_filtered.width * cloud_filtered.height);
+    float *output_cpu = (float *)cloud_filtered.points.data();
+    memset(output_cpu, 0, sizeof(float) * 4 * num_points_filtered);
+
+    // Copying the filtered data from the device to the host
+    cudaMemcpyAsync(output_cpu, output_cuda, sizeof(float) * 4 * num_points_filtered, cudaMemcpyDeviceToHost, stream);
+    cudaDeviceSynchronize();
+
+    // Freeing the allocated memory
+    cudaFree(input_cuda);
+    cudaFree(output_cuda);
+    cudaStreamDestroy(stream);
+
+    return;
 }
 
 void BommiePlanner::estimatePlane(const pcl::PointCloud<pcl::PointXYZ>& cloud,
@@ -314,7 +451,7 @@ bool BommiePlanner::estimateBestPlane(pcl::PointCloud<pcl::PointXYZ>& cloud,
         goal_point.translation() = candidate_goal;
 
         Eigen::Vector2d centroid_in_goal = goal_point.inverse() * centroid;
-        std::cout << "Centroid in goal: " << centroid_in_goal.transpose() << std::endl;
+        //std::cout << "Centroid in goal: " << centroid_in_goal.transpose() << std::endl;
         bool found = centroid_in_goal[1] < -0.1;
 
         if (found && (valid_candidate1 || valid_candidate2))

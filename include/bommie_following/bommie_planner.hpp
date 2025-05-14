@@ -45,11 +45,39 @@ public:
 
 private:
 
-    void filterCloud(const pcl::PointCloud<pcl::PointXYZ>& cloud,
-                     const std::string& field_name,
-                     const float min_limit,
-                     const float max_limit, 
-                     pcl::PointCloud<pcl::PointXYZ>& cloud_filtered);
+    void filterCloudCPU(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                        const std::string& field_name,
+                        const float min_limit,
+                        const float max_limit, 
+                        pcl::PointCloud<pcl::PointXYZ>& cloud_filtered);
+
+    void filterCloudCuda(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                         const std::string& field_name,
+                         const float min_limit,
+                         const float max_limit, 
+                         pcl::PointCloud<pcl::PointXYZ>& cloud_filtered);
+
+    inline void filterCloud(const pcl::PointCloud<pcl::PointXYZ>& cloud, const std::string& field_name,
+                            const float min_limit, const float max_limit, 
+                            pcl::PointCloud<pcl::PointXYZ>& cloud_filtered)
+    {
+        return _cuda ? filterCloudCuda(cloud, field_name, min_limit, max_limit, cloud_filtered) : 
+                       filterCloudCPU(cloud, field_name, min_limit, max_limit, cloud_filtered);
+    }
+
+
+    void downSampleCloudCuda(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                             pcl::PointCloud<pcl::PointXYZ>& cloud_filtered);
+
+    void downSampleCloudCPU(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                            pcl::PointCloud<pcl::PointXYZ>& cloud_filtered);
+
+    inline void downSampleCloud(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+                                pcl::PointCloud<pcl::PointXYZ>& cloud_filtered)
+    {
+        return _cuda ? downSampleCloudCuda(cloud, cloud_filtered) : 
+                       downSampleCloudCPU(cloud, cloud_filtered);
+    }
 
     void estimatePlane(const pcl::PointCloud<pcl::PointXYZ>& cloud,
                        pcl::ModelCoefficients& coefficients,
@@ -96,8 +124,10 @@ private:
     double _min_fwd_distance;
 
     int _follow_wall;
-
     bool _debug;
+    bool _cuda;
 
     Eigen::Vector3d _vertical_normal;
+    std::map<std::string, int> _cuda_filter_map;
+
 };

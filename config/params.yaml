@@ -20,3 +20,4 @@ leaf_size: 0.025 # Leaf size for the voxel grid filter
 
 
 debug: true # Debug mode
+cuda: true # Use CUDA for processing
