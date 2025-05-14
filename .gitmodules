@@ -1,0 +1,3 @@
+[submodule "thirdParty/cudaPCL"]
+	path = thirdParty/cudaPCL
+	url = https://github.com/EmilioOlivastri/cudaPCL.git
