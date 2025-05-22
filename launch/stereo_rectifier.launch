@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+
+<launch>
+	<!-- Params -->
+	<arg name= "rig_calib_path"	        default="" />
+    <arg name= "stereo_rig_arg"	        default="stereo" />
+    <arg name= "camera_name_arg"	    default="rig1" />
+    <arg name= "distortion_ros"	    default="plumb_bob" />
+
+	<!-- Camera Node -->
+	<node name="left_stereo_rig"
+          ns="stereo"
+          pkg="bommie_following"
+          type="stereo_undistorter_node"
+          args="$(arg rig_calib_path)"
+          output="screen"
+          required="true">
+
+        <param name="stereo_rig"                value= "$(arg stereo_rig_arg)" />
+        <param name="camera_name"               value= "$(arg camera_name_arg)" />
+        <param name="frame_id"                  value= "_optical" />
+        <param name="distortion_model"			value="$(arg distortion_ros)" />
+	</node>
+	
+</launch>

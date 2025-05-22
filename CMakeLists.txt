@@ -12,6 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   visualization_msgs
+  cv_bridge
 )
 
 ## System dependencies are found with CMake's conventions
@@ -96,6 +97,10 @@ add_executable(${PROJECT_NAME}_node
 src/bommie_follower_node.cpp
 src/bommie_planner.cpp)
 
+add_executable(stereo_undistorter_node 
+src/stereo_undistorter_node.cpp
+src/stereo_undistorter.cpp)
+
 # set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
 
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
@@ -108,4 +113,10 @@ target_link_libraries(${PROJECT_NAME}_node
   ${YAML_CPP_LIBRARIES}
   ${CUDAPCL_LIBRARIES}
   ${CUDA_LIBRARIES}
+)
+
+target_link_libraries(stereo_undistorter_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${YAML_CPP_LIBRARIES}
 )

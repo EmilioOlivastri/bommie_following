@@ -135,7 +135,7 @@ void BommiePlanner::wallFollowing(const sensor_msgs::PointCloud2ConstPtr& cloud_
     std::chrono::steady_clock::time_point projection = std::chrono::steady_clock::now();
 
     pcl::toROSMsg(cloud_filtered, contour_msg);
-    contour_msg.header = cloud_msg->header;
+    contour_msg.header = _header;
     _pub_pcl.publish(contour_msg);
 
     Eigen::Vector3d color_red(1.0, 0.0, 0.0);
@@ -169,7 +169,7 @@ void BommiePlanner::wallFollowing(const sensor_msgs::PointCloud2ConstPtr& cloud_
         //std::cout << "Angle = " << cos_alpha << std::endl;
 
         _debug ? pcl::toROSMsg(cloud_planes[i], plane_msg) : pcl::toROSMsg(plane_countour, plane_msg);  
-        plane_msg.header = cloud_msg->header;
+        plane_msg.header = _header;
 
         // Publish the filtered clouds and goals
         _pub_planes[i].publish(plane_msg);
